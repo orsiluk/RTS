@@ -17,8 +17,8 @@ void DisplayWORD(BYTE pos, WORD w);
 void DisplayIPValue(DWORD IPdw);
 size_t strlcpy(char *dst, const char *src, size_t siz);
 char* current_time_string(void);
-
-
+void display_time(void);
+void blink_time(void);
 
 /*************************************************
  Function DisplayWORD:
@@ -149,32 +149,15 @@ strlcpy(char *dst, const char *src, size_t siz)
   return (s - src - 1);       /* count does not include NUL */
 }
 
-unsigned int current_hours = 0;
-unsigned int current_minutes = 0;
-unsigned int current_seconds = 0;
-
-typedef enum
-{
-    STARTUP,
-    WAIT_FOR_RELEASE;
-    WAIT_HOURS,
-    WAIT_MINS,
-    WAIT_SECS,
-    SET_TIME,
-    INC_HOURS,
-    INC_MINS,
-    INC_SECS,
-    INC_SECS_2,
-    INC_MINS_2,
-    INC_HOURS_2,
-    RESET,
-} fsm_state;
+unsigned char current_hours = 0;
+unsigned char current_minutes = 0;
+unsigned char current_seconds = 0;
 
 char* current_time_string(void)
 {
     char string[16];
 
-    int i = 0;
+    unsigned char i = 0;
     for (;i<8;i++)
         string[i] = '0';
     for(;i<16;i++)
@@ -206,10 +189,46 @@ char* current_time_string(void)
     return string;
 }
 
+/* Displays current time on LCD display */
+void display_time(void)
+{
+  DisplayString(16, current_time_string());
+}
+
+/* Blinks current time on display */
+void blink_time(void)
+{
+  DisplayString(16,"");
+  DelayMs(100);
+  display_time();
+}
+
+typedef enum
+{
+    STARTUP,
+    WAIT_FOR_RELEASE,
+    WAIT_HOURS,
+    WAIT_MINS,
+    WAIT_SECS,
+    SET_TIME,
+    INC_HOURS,
+    INC_MINS,
+    INC_SECS,
+    INC_SECS_2,
+    INC_MINS_2,
+    INC_HOURS_2,
+    RESET,
+    INC_HOURS_WAIT,
+    INC_MINS_WAIT,
+    INC_SECS_WAIT
+} fsm_state;
+
 void main(void)
 {
-  int i;
-  WORD w;
+  //int i;
+  //WORD w;
+  fsm_state state = STARTUP;
+  unsigned char hms = 0;
   LED0_TRIS = 0; //configure 1st led pin as output (yellow)
   LED1_TRIS = 0; //configure 2nd led pin as output (red)
   LED2_TRIS = 0; //configure 3rd led pin as output (red)
@@ -242,11 +261,11 @@ void main(void)
  
 
   /* Here we copy what we wrote in the buffer on the LCD */
-  for (i = 16; i < 21; i++)
-  {
-    LCDText[i] =  EDATA;
-  }
-  LCDUpdate();
+  // for (i = 16; i < 21; i++)
+  // {
+  //   LCDText[i] =  EDATA;
+  // }
+  // LCDUpdate();
 
   /* main loop of this toy program: turn leds on if button 1 is pressed */
   //char[8] times = "00:00.00";
@@ -255,8 +274,7 @@ void main(void)
   // ERDPTH = 0;
   //DisplayString(16, current_time_string());
 
-  fsm_state state = STARTUP;
-  int hms = 0;
+  
 
   while(1)
   {
@@ -266,39 +284,93 @@ void main(void)
             current_hours = 0;
             current_minutes = 0;
             current_seconds = 0;
+            hms = 0;
+            display_time();
             if(BUTTON0_IO == 0u && BUTTON1_IO == 0u)
                 state = WAIT_FOR_RELEASE;
             break;
 
         case WAIT_FOR_RELEASE:
-            if (hms == 0 && BUTTON0_IO == 1u && BUTTON1_IO == 1u)
+            if (BUTTON0_IO == 1u && BUTTON1_IO == 1u)
                 state = SET_TIME;
-            else if(hms == 2)
+            else if(hms > 2)
+            {
+                hms = 0;
                 state = INC_SECS_2;
+            }
             break;
 
         case SET_TIME:
+            blink_time();
             if (BUTTON0_IO == 0u)
             {
                 if (BUTTON1_IO == 0u)
+                {
+                    hms++;
                     state = WAIT_FOR_RELEASE;
+                }
                 else if (hms == 0)
                     state = INC_HOURS;
                 else if(hms == 1)
                     state = INC_MINS;
                 else if(hms == 2)
-                    state = INC_SECS;
+                  state = INC_SECS;
             }
             break;
 
         case INC_HOURS:
-            current_hours++;
-            state = 
+            current_hours = (current_hours < 23? current_hours+1:0);
+            state = INC_HOURS_WAIT;
+            break;
+        case INC_HOURS_WAIT:
+            if(BUTTON1_IO == 1u)
+              state = SET_TIME;
             break;
 
-    }
+        case INC_MINS:
+            current_minutes = (current_minutes < 59? current_minutes+1:0);
+            state = INC_MINS_WAIT;
+            break;
+        case INC_MINS_WAIT:
+            if(BUTTON1_IO == 1u)
+              state = SET_TIME;
+            break;
 
-  }
+        case INC_SECS:
+            current_seconds = (current_seconds < 59? current_seconds+1:0);
+            state = INC_SECS_WAIT;
+            break;
+        case INC_SECS_WAIT:
+            if(BUTTON1_IO == 1u)
+              state = SET_TIME;
+            break; 
+
+        case INC_SECS_2:
+            DelayMs(1000);
+            current_seconds++;
+            display_time();
+            if(current_seconds==60)
+              state = INC_MINS_2;
+            break;
+        case INC_MINS_2:
+            current_minutes++;
+            state = (current_minutes == 60? INC_HOURS_2:INC_SECS_2);
+            break;
+
+        case INC_HOURS_2:
+            current_hours++;
+            state = (current_hours == 24? RESET:INC_SECS_2);
+            break;
+
+        case RESET:
+            current_hours = 0;
+            current_minutes = 0;
+            current_seconds = 0;
+            state = INC_SECS_2;
+            break;
+
+    } //end case
+  }   //end while
 
   
   // set_time = 0;
