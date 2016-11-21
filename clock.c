@@ -12,6 +12,48 @@
 #define LOW(a)     (a & 0xFF)
 #define HIGH(a)    ((a>>8) & 0xFF)
 
+const char *state2str[] = 
+{
+  "STARTUP",
+  "WAIT_FOR_RELEASE",
+  "WAIT_HOURS",
+  "WAIT_MINS",
+  "WAIT_SECS",
+  "SET_TIME",
+  "INC_HOURS",
+  "INC_MINS",
+  "INC_SECS",
+  "INC_SECS_2",
+  "INC_MINS_2",
+  "INC_HOURS_2",
+  "RESET",
+  "INC_HOURS_WAIT",
+  "INC_MINS_WAIT",
+  "INC_SECS_WAIT",
+  "DEBOUNCE"
+};
+
+typedef enum
+{
+    STARTUP,
+    WAIT_FOR_RELEASE,
+    WAIT_HOURS,
+    WAIT_MINS,
+    WAIT_SECS,
+    SET_TIME,
+    INC_HOURS,
+    INC_MINS,
+    INC_SECS,
+    INC_SECS_2,
+    INC_MINS_2,
+    INC_HOURS_2,
+    RESET,
+    INC_HOURS_WAIT,
+    INC_MINS_WAIT,
+    INC_SECS_WAIT,
+    DEBOUNCE
+} FSM_STATE;
+
 void DisplayString(BYTE pos, char* text);
 void DisplayWORD(BYTE pos, WORD w);
 void DisplayIPValue(DWORD IPdw);
@@ -20,8 +62,7 @@ char* current_time_string(void);
 void display_time(void);
 void blink_time(void);
 void debug_display_time(void);
-void display_state(void);
-void delay_ms(unsigned long times);
+void display_state(FSM_STATE state);
 
 
 /*************************************************
@@ -89,49 +130,7 @@ void DisplayString(BYTE pos, char* text)
 
 #endif
 
-const char *state2str[] = 
-{
-  "STARTUP",
-  "WAIT_FOR_RELEASE",
-  "WAIT_HOURS",
-  "WAIT_MINS",
-  "WAIT_SECS",
-  "SET_TIME",
-  "INC_HOURS",
-  "INC_MINS",
-  "INC_SECS",
-  "INC_SECS_2",
-  "INC_MINS_2",
-  "INC_HOURS_2",
-  "RESET",
-  "INC_HOURS_WAIT",
-  "INC_MINS_WAIT",
-  "INC_SECS_WAIT",
-  "DEBOUNCE"
-};
 
-typedef enum
-{
-    STARTUP,
-    WAIT_FOR_RELEASE,
-    WAIT_HOURS,
-    WAIT_MINS,
-    WAIT_SECS,
-    SET_TIME,
-    INC_HOURS,
-    INC_MINS,
-    INC_SECS,
-    INC_SECS_2,
-    INC_MINS_2,
-    INC_HOURS_2,
-    RESET,
-    INC_HOURS_WAIT,
-    INC_MINS_WAIT,
-    INC_SECS_WAIT,
-    DEBOUNCE
-} fsm_state;
-
-fsm_state state;
 
 /*-------------------------------------------------------------------------
  *
@@ -196,15 +195,31 @@ strlcpy(char *dst, const char *src, size_t siz)
   return (s - src - 1);       /* count does not include NUL */
 }
 
-void delay_ms(unsigned long times)
-{
-  unsigned long i = 25000*times;
-  while(i-- > 0);
-}
-
 unsigned char current_hours = 0;
 unsigned char current_minutes = 0;
 unsigned char current_seconds = 0;
+
+
+void high_isr (void) interrupt 1
+{
+  LED_PUT(0x01);
+  if(INTCONbits.TMR0IF)  //If TMR0 interrupt
+  {
+    current_seconds++;
+    display_time();
+    INTCONbits.TMR0IF = 0;
+  }
+
+  /*
+  if(PIR1bits.TMR1IF == 1) //If TMR1 interrupt
+  {
+    current_seconds++;
+    display_time();
+    PIR1bits.TMR1IF = 0; //Clear flag
+  }
+  */
+}
+
 
 char* current_time_string(void)
 {
@@ -259,7 +274,7 @@ void display_time(void)
   DisplayString(16, current_time_string());
 }
 
-void display_state(void)
+void display_state(FSM_STATE state)
 {
   DisplayString(0,"                ");
   DisplayString(0,state2str[state]);
@@ -276,10 +291,16 @@ void blink_time(void)
 
 void main(void)
 {
-  //unsigned int i;
-  //WORD w;
-  int set_time = 0;
+  
+
+
   unsigned char hms = 0;
+  FSM_STATE state = STARTUP;
+    unsigned int ticks_per_sec = 24414;
+
+  //unsigned int ticks_per_sec = 0x;
+  
+
   LED0_TRIS = 0; //configure 1st led pin as output (yellow)
   LED1_TRIS = 0; //configure 2nd led pin as output (red)
   LED2_TRIS = 0; //configure 3rd led pin as output (red)
@@ -287,279 +308,160 @@ void main(void)
   BUTTON0_TRIS = 1; //configure button0 as input
   BUTTON1_TRIS = 1; //configure button1 as input
 
+  /*
+  // INTERRUPT SETUP
+  INTCONbits.GIE = 1;  //enable global interrupts
+  INTCONbits.PEIE = 1; //enable peripheral interrupts (such as TMR1)
+  //PIE1bits.TMR1IE = 1; //enable TMR1 interrupts
+  PIR1bits.TMR1IF = 0; //reset TMR1 flag
+  IPR1bits.TMR1IP = 1; //TMR1 interrupts have high prio
+  RCONbits.IPEN = 1;   //Enable priority levels
+
+  //  TIMER1 SETUP
+
+  TMR1H = 0x80;
+  TMR1L = 0x0;
+  //TMR1H = (0xFF00 & ticks_per_sec) >> 8;
+  //TMR1L = 0x00FF & ticks_per_sec;
+
+  T1CONbits.RD16 = 0; //2x8bit operation
+  T1CONbits.T1RUN = 0; //???
+  //T1CONbits.TCKPS = 0b11; //Prescale 1:8
+  //T1CON |= 0x30;    //Prescale 1:8
+  T1CONbits.T1OSCEN = 1; //Enable clock
+  T1CONbits.T1SYNC = 1;  //??? dont care
+  T1CONbits.TMR1CS = 1; //Use external clock sourse
+  T1CONbits.TMR1ON = 1;   //Enable TMR1
+
+  PIE1bits.TMR1IE = 1; //enable TMR1 interrupts
+  */
+
+  TMR0H=(0xFF00 & ticks_per_sec)>>8;
+  TMR0L=(0x00FF & ticks_per_sec);
+
+  // TMR0 SETUP
+  T0CONbits.TMR0ON = 0; //stop timer
+  T0CONbits.T08BIT = 0;  //16bit
+  T0CONbits.T0CS = 0;   //Clock source = instruction cycle CLK
+  T0CONbits.T0SE = 0;   //Rising edge
+  T0CONbits.PSA = 0;    //Assign prescaler
+  //T0CONbits.T0PS = 0x7; //Prescaler = 256 => 39062.5 ticks = 1
+  T0CON |= 0x7;
+  //T0CON |= 0x40;
+  
+
+  //  INTERRUPT CONFIG
+  INTCONbits.GIE = 1;   //enable global interrupts
+  INTCONbits.TMR0IE=1;  //enable timer0 interrupts
+
+  INTCON2bits.TMR0IP=1; //TMR0 has high prio
+
+  /*INTCON=0xA0;    
+  INTCON2=0x4;
+  */
+  T0CONbits.TMR0ON = 1;  //Enable TMR0
+
   LCDInit();
-  DelayMs(100);
+  DelayMs(10);
   LED_PUT(0x00);
 
-  /* Here we write a few chars in the external buffer of the ethernet
-     interface of this PIC microcomputer */
-  // w = 5;
-  // EWRPTL = LOW(w);
-  // EWRPTH = HIGH(w);
-  // EDATA = '1';
-  // EDATA = '2';
-  // EDATA = '3';
-  // EDATA = '4';
-  // EDATA = '5';
-  // EDATA = 0;
 
-  // DisplayString (0, "Test of Ethernet buffer"); //first arg is start position
-  // // on 32 positions LCD
-
-  //DisplayString (16, "      Push But1");
-
-  /* Here we copy what we wrote in the buffer on the LCD */
-  // for (i = 16; i < 21; i++)
-  // {
-  //   LCDText[i] =  EDATA;
-  // }
-  // LCDUpdate();
-
-  /* main loop of this toy program: turn leds on if button 1 is pressed */
-  //char[8] times = "00:00.00";
-
-   // ERDPTL = 5;
-  // ERDPTH = 0;
-  //DisplayString(16, current_time_string());
-  state = STARTUP;
+  //display_time();
   while(1)
   {
-    display_state();
+    LED_PUT(0x02);
+    DelayMs(100);
+    LED_PUT(0x0);
+    DelayMs(100);
+  }
+  
+  // STATE MACHINE
+  /*
+  while(1)
+  {
+    display_state(state);
     display_time();
-    if(state == STARTUP)
-    {
-      current_hours = 0;
-      current_minutes = 0;
-      current_seconds = 0;
-      hms = 0;
-      
-      if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
-    }
-    else if (state == WAIT_FOR_RELEASE)
-    {
-      if (BUTTON0_IO == 1u && BUTTON1_IO == 1u)
-      {
-        if(hms == 0)
-        {
 
+    switch(state)
+    {
+      case(STARTUP):
+        current_hours = 0;
+        current_minutes = 0;
+        current_seconds = 0;
+        hms = 0;
+        if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+        break;
+
+      case(WAIT_FOR_RELEASE):
+        if (BUTTON0_IO == 1u && BUTTON1_IO == 1u)
+        {
+          hms++;
+          state = SET_TIME;
         }
-        hms++;
-        state = SET_TIME;
-      }
-      if(hms > 3)
-      {
+        if(hms > 3)
+        {
           hms = 0;
           state = INC_SECS_2;
-      }
-    }
-    else if (state == SET_TIME)
-    {
-      if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
-      else if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
-      {
-        if(hms==1)
-          state = INC_HOURS;
-        else if(hms==2)
-          state = INC_MINS;
-        else if(hms==3)
-          state = INC_SECS;
-      }
-    }
-    else if (state == INC_HOURS)
-    {
-      current_hours = (current_hours < 23? current_hours+1:0);
-      state = INC_HOURS_WAIT;
-    }
-    else if (state == INC_HOURS_WAIT)
-    {
-      if(BUTTON0_IO == 1u)
-        state = SET_TIME;
-    }
-    else if (state == INC_MINS)
-    {
-      current_minutes = (current_minutes < 59? current_minutes+1:0);
-      state = INC_MINS_WAIT;
-    }
-    else if (state == INC_MINS_WAIT)
-    {
-      if(BUTTON0_IO == 1u)
-        state = SET_TIME;
-    }
-    else if (state == INC_SECS)
-    {
-      current_seconds = (current_seconds < 59? current_seconds+1:0);
-      state = INC_SECS_WAIT;
-    }
-    else if (state == INC_SECS_WAIT)
-    {
-      if(BUTTON0_IO == 1u)
-        state = SET_TIME;
-    }
+        }
+        break;
 
-    else if (state == INC_SECS_2)
-    {
+    case(SET_TIME):
+      if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+      else if(hms==1)
+      {
+        if(BUTTON0_IO == 0u)
+          current_hours = (current_hours > 0? current_hours-1:23);
+        else if(BUTTON1_IO == 0u)
+          current_hours = (current_hours < 23? current_hours+1:0);
+      }
+      else if(hms==2)
+      {
+        if(BUTTON0_IO == 0u)
+          current_minutes = (current_minutes > 0? current_minutes-1:59);
+        else if(BUTTON1_IO == 0u)
+          current_minutes = (current_minutes < 59? current_minutes+1:0);
+      }
+      else if(hms==3)
+      {
+        if(BUTTON0_IO == 0u)
+          current_seconds = (current_seconds > 0? current_seconds-1:59);
+        else if(BUTTON1_IO == 0u)
+          current_seconds = (current_seconds < 59? current_seconds+1:0);
+      }
+
+      while(BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
+      break;
+
+    case(INC_SECS_2):
       DelayMs(100);
       current_seconds++;
       if(current_seconds==60)
         state = INC_MINS_2;
       else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
-    }
-    else if (state == INC_MINS_2)
-    {
+      break;
+
+    case(INC_MINS_2):
       current_minutes++;
       current_seconds=0;
       state = (current_minutes == 60? INC_HOURS_2:INC_SECS_2);
-    }
-    else if (state == INC_HOURS_2)
-    {
+      break;
+
+    case(INC_HOURS_2):
       current_hours++;
       current_minutes=0;
       state = (current_hours == 24? RESET:INC_SECS_2);
-    }
-    else if (state == RESET)
-    {
+      break;
+
+    case(RESET):
       current_hours = 0;
       current_minutes = 0;
       current_seconds = 0;
       state = INC_SECS_2;
-    }
-    else
-    {
+      break;
+
+    default:
       state = STARTUP;
-    }
-  }
-
-  // while(1)
-  // {
-  //   switch(state)
-  //   {
-  //       case STARTUP:
-  //           //LED_PUT(0x00);
-  //           //blink_time();
-  //           display_time();
-  //           LED_PUT(0x07);  //turn on the 3 red leds
-  //           current_hours = 0;
-  //           current_minutes = 0;
-  //           current_seconds = 0;
-  //           hms = 0;
-            
-  //           if(BUTTON0_IO == 0u && BUTTON1_IO == 0u)
-  //               state = WAIT_FOR_RELEASE;
-  //           break;
-
-  //       case WAIT_FOR_RELEASE:
-  //           blink_time();
-  //           if (BUTTON0_IO == 1u && BUTTON1_IO == 1u)
-  //               state = SET_TIME;
-  //           else if(hms > 2)
-  //           {
-  //               hms = 0;
-  //               state = INC_SECS_2;
-  //           }
-  //           break;
-
-  //       case SET_TIME:
-  //           blink_time();
-  //           if (BUTTON0_IO == 0u)
-  //           {
-  //               if (BUTTON1_IO == 0u)
-  //               {
-  //                   hms++;
-  //                   state = WAIT_FOR_RELEASE;
-  //               }
-  //               else if (hms == 0)
-  //                   state = INC_HOURS;
-  //               else if(hms == 1)
-  //                   state = INC_MINS;
-  //               else if(hms == 2)
-  //                 state = INC_SECS;
-  //           }
-  //           break;
-
-  //       case INC_HOURS:
-  //           current_hours = (current_hours < 23? current_hours+1:0);
-  //           state = INC_HOURS_WAIT;
-  //           break;
-  //       case INC_HOURS_WAIT:
-  //           if(BUTTON1_IO == 1u)
-  //             state = SET_TIME;
-  //           break;
-
-  //       case INC_MINS:
-  //           current_minutes = (current_minutes < 59? current_minutes+1:0);
-  //           state = INC_MINS_WAIT;
-  //           break;
-  //       case INC_MINS_WAIT:
-  //           if(BUTTON1_IO == 1u)
-  //             state = SET_TIME;
-  //           break;
-
-  //       case INC_SECS:
-  //           current_seconds = (current_seconds < 59? current_seconds+1:0);
-  //           state = INC_SECS_WAIT;
-  //           break;
-  //       case INC_SECS_WAIT:
-  //           if(BUTTON1_IO == 1u)
-  //             state = SET_TIME;
-  //           break; 
-
-  //       case INC_SECS_2:
-  //           for(i=0;i<10;i++) DelayMs(100);
-  //           current_seconds++;
-  //           display_time();
-  //           if(current_seconds==60)
-  //             state = INC_MINS_2;
-  //           break;
-  //       case INC_MINS_2:
-  //           current_minutes++;
-  //           state = (current_minutes == 60? INC_HOURS_2:INC_SECS_2);
-  //           break;
-
-  //       case INC_HOURS_2:
-  //           current_hours++;
-  //           state = (current_hours == 24? RESET:INC_SECS_2);
-  //           break;
-
-  //       case RESET:
-  //           current_hours = 0;
-  //           current_minutes = 0;
-  //           current_seconds = 0;
-  //           state = INC_SECS_2;
-  //           break;
-
-  //   } //end case
-  // }   //end while
-
-  
-  // set_time = 0;
-
-  //   while (1)
-  //   {
-  //   //ERDPTL = 5;
-  //   //ERDPTH = 0;
-
-  //       if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
-  //           set_time = 1;
-
-  //       if (set_time == 1 && (BUTTON0_IO == 1u && BUTTON1_IO == 1u))
-  //           break;
-  //   }
-    // while(1)
-    // {
-    //     set_time = 0;
-    //     if (BUTTON0_IO == 0u) //If Button 0 is pressed
-    //     {
-    //         current_hours++;
-    //       //  DisplayString(16, "00:00.01        ");
-    //       LED_PUT(0x07);  //turn on the 3 red leds
-    //     }
-    //     else
-    //       LED_PUT(0x00);  //turn them off
-
-    //     DisplayString(16, current_time_string());
-    //     DelayMs(100);
-    //     //for (i = 0; i < 1000; i++);
-
-    // }
-
+    } //end switch
+  }   //end while
+  */
 }
