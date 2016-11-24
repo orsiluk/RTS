@@ -58,16 +58,35 @@ typedef enum
     DEBOUNCE
 } FSM_STATE;
 
+struct Time
+{
+  unsigned char hours;
+  unsigned char minutes;
+  unsigned char seconds;
+};
+
+struct Time current_time, alarm_time;
+/*
+current_time.hours = 0;
+current_time.minutes = 0;
+current_time.seconds = 0;
+alarm_time.hours = 0;
+alarm_time.minutes = 0;
+alarm_time.seconds = 0;
+*/
+
 void DisplayString(BYTE pos, char* text);
 void DisplayWORD(BYTE pos, WORD w);
 void DisplayIPValue(DWORD IPdw);
 size_t strlcpy(char *dst, const char *src, size_t siz);
-char* current_time_string(void);
-void display_time(void);
-void blink_time(void);
-void debug_display_time(void);
+char* current_time_string(unsigned char set_time);
+//void blink_time(void);
+//void debug_display_time(void);
 void display_state(FSM_STATE state);
-void flush_state(void);
+//void flush_state(void);
+void change_time(unsigned char hms, struct Time* time);
+void display_time(unsigned char set_time);
+
 
 
 /*************************************************
@@ -200,13 +219,11 @@ strlcpy(char *dst, const char *src, size_t siz)
   return (s - src - 1);       /* count does not include NUL */
 }
 
+/*
 unsigned char current_hours = 0;
 unsigned char current_minutes = 0;
 unsigned char current_seconds = 0;
-
-unsigned char alarm_hours = 0;
-unsigned char alarm_minutes = 0;
-unsigned char alarm_seconds = 0;
+*/
 
 unsigned char ticks = 0;
 
@@ -218,7 +235,7 @@ void high_isr (void) interrupt 1
     INTCONbits.TMR0IE = 0;
     if (++ticks == 125)
     {
-      current_seconds++;
+      current_time.seconds++;
       ticks = 0;
     }
     
@@ -239,57 +256,61 @@ void high_isr (void) interrupt 1
 }
 
 
-char* current_time_string(void)
+char* current_time_string(unsigned char set_time)
 {
-    char string[16];
-    unsigned char i = 0;
-    for (;i<8;i++)
-        string[i] = '0';
+  struct Time* time = (set_time? &current_time : &alarm_time);
+
+  char string[16];
+  unsigned char i = 0;
+  for (;i<8;i++)
+      string[i] = '0';
 
 
-    if (current_hours > 9)
-    {
-        string[1] += current_hours % 10;
-        string[0] += current_hours/10;
-    }
-    else
-      string[1] += current_hours;
+  if (time->hours > 9)
+  {
+      string[1] += time->hours % 10;
+      string[0] += time->hours/10;
+  }
+  else
+    string[1] += time->hours;
 
-    string[2] = ':';
+  string[2] = ':';
 
-    if (current_minutes > 9)
-    {
-        string[4] += current_minutes % 10;
-        string[3] += current_minutes/10;
-    }
-    else
-      string[4] += current_minutes;
+  if (time->minutes > 9)
+  {
+      string[4] += time->minutes % 10;
+      string[3] += time->minutes/10;
+  }
+  else
+    string[4] += time->minutes;
 
-    string[5] = '.';
+  string[5] = '.';
 
-    if (current_seconds > 9)
-    {
-        string[7] += current_seconds % 10;
-        string[6] += current_seconds/10;
-    }
-    else
-      string[7] += current_seconds;
+  if (time->seconds > 9)
+  {
+      string[7] += time->seconds % 10;
+      string[6] += time->seconds/10;
+  }
+  else
+    string[7] += time->seconds;
 
-    return string;
+  return string;
 }
 
+/*
 void debug_display_time(void)
 {
   LED_PUT(0x00);
   //DelayMs(40);
-  display_time();
+  display_time(set_time);
   LED_PUT(0x01);
 }
+*/
 
 /* Displays current time on LCD display */
-void display_time(void)
+void display_time(unsigned char set_time)
 {
-  DisplayString(16, current_time_string());
+  DisplayString(16, current_time_string(set_time));
 }
 
 void display_state(FSM_STATE state)
@@ -298,30 +319,57 @@ void display_state(FSM_STATE state)
   DisplayString(0,state2str[state]);
 }
 
+/*
 void flush_state(void)
 {
   DisplayString(0,"                ");
 }
+*/
 
 /* Blinks current time on display */
+/*
 void blink_time(void)
 {
   DisplayString(16,"");
   DelayMs(100);
-  display_time();
+  display_time(set_time);
+}
+*/
+
+void change_time(unsigned char hms, struct Time* time)
+{
+  if(hms==1)
+  {
+    if(BUTTON0_IO == 0u)
+    {
+      time->hours = (time->hours > 0? time->hours-1:23);
+    }
+    else if(BUTTON1_IO == 0u)
+      time->hours = (time->hours < 23? time->hours+1:0);
+  }
+  else if(hms==2)
+  {
+    if(BUTTON0_IO == 0u)
+      time->minutes = (time->minutes > 0? time->minutes-1:59);
+    else if(BUTTON1_IO == 0u)
+      time->minutes = (time->minutes < 59? time->minutes+1:0);
+  }
+  else if(hms==3)
+  {
+    if(BUTTON0_IO == 0u)
+      time->seconds = (time->seconds > 0? time->seconds-1:59);
+    else if(BUTTON1_IO == 0u)
+      time->seconds = (time->seconds < 59? time->seconds+1:0);
+  }
 }
 
 
 void main(void)
 {
-  
-
-
   unsigned char hms = 0;
   FSM_STATE state = STARTUP;
-  unsigned int ticks_per_sec;
-
-  //unsigned int ticks_per_sec = 0x;
+  char set_time = 1;
+  struct Time *ptr;
   
 
   LED0_TRIS = 0; //configure 1st led pin as output (yellow)
@@ -407,14 +455,14 @@ void main(void)
   while(1)
   {
     display_state(state);
-    display_time();
+    display_time(set_time);
 
     switch(state)
     {
       case(STARTUP):
-        current_hours = 0;
-        current_minutes = 0;
-        current_seconds = 0;
+        current_time.hours = 0;
+        current_time.minutes = 0;
+        current_time.seconds = 0;
         hms = 0;
         if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
         break;
@@ -435,10 +483,17 @@ void main(void)
 
     case(SET_TIME):
       if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+
+      if(set_time) ptr = &current_time;
+      else ptr = &alarm_time;
+      change_time(hms, ptr);
+      /*
       else if(hms==1)
       {
         if(BUTTON0_IO == 0u)
+        {
           current_hours = (current_hours > 0? current_hours-1:23);
+        }
         else if(BUTTON1_IO == 0u)
           current_hours = (current_hours < 23? current_hours+1:0);
       }
@@ -456,33 +511,34 @@ void main(void)
         else if(BUTTON1_IO == 0u)
           current_seconds = (current_seconds < 59? current_seconds+1:0);
       }
+      */
 
       while(BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
       break;
 
     case(INC_SECS_2):
       //current_seconds++;
-      if(current_seconds==60)
+      if(current_time.seconds == 60)
         state = INC_MINS_2;
       else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
       break;
 
     case(INC_MINS_2):
-      current_minutes++;
-      current_seconds=0;
-      state = (current_minutes == 60? INC_HOURS_2:INC_SECS_2);
+      current_time.minutes++;
+      current_time.seconds=0;
+      state = (current_time.minutes == 60? INC_HOURS_2:INC_SECS_2);
       break;
 
     case(INC_HOURS_2):
-      current_hours++;
-      current_minutes=0;
-      state = (current_hours == 24? RESET:INC_SECS_2);
+      current_time.hours++;
+      current_time.minutes=0;
+      state = (current_time.hours == 24? RESET:INC_SECS_2);
       break;
 
     case(RESET):
-      current_hours = 0;
-      current_minutes = 0;
-      current_seconds = 0;
+      current_time.hours = 0;
+      current_time.minutes = 0;
+      current_time.seconds = 0;
       state = INC_SECS_2;
       break;
 
