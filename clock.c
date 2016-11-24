@@ -12,6 +12,10 @@
 #define LOW(a)     (a & 0xFF)
 #define HIGH(a)    ((a>>8) & 0xFF)
 
+#define DIVISOR 5*25*25*16
+#define HIGH ((65535 - DIVISOR) & 0xFF00) >> 8
+#define LOW (65535 - DIVISOR) & 0xFF
+
 const char *state2str[] = 
 {
   "STARTUP",
@@ -63,6 +67,7 @@ void display_time(void);
 void blink_time(void);
 void debug_display_time(void);
 void display_state(FSM_STATE state);
+void flush_state(void);
 
 
 /*************************************************
@@ -199,15 +204,28 @@ unsigned char current_hours = 0;
 unsigned char current_minutes = 0;
 unsigned char current_seconds = 0;
 
+unsigned char alarm_hours = 0;
+unsigned char alarm_minutes = 0;
+unsigned char alarm_seconds = 0;
+
+unsigned char ticks = 0;
+
 
 void high_isr (void) interrupt 1
 {
-  LED_PUT(0x01);
   if(INTCONbits.TMR0IF)  //If TMR0 interrupt
   {
-    current_seconds++;
-    display_time();
+    INTCONbits.TMR0IE = 0;
+    if (++ticks == 125)
+    {
+      current_seconds++;
+      ticks = 0;
+    }
+    
     INTCONbits.TMR0IF = 0;
+    INTCONbits.TMR0IE = 1; 
+    TMR0H=HIGH;
+    TMR0L=LOW; 
   }
 
   /*
@@ -280,6 +298,11 @@ void display_state(FSM_STATE state)
   DisplayString(0,state2str[state]);
 }
 
+void flush_state(void)
+{
+  DisplayString(0,"                ");
+}
+
 /* Blinks current time on display */
 void blink_time(void)
 {
@@ -296,7 +319,7 @@ void main(void)
 
   unsigned char hms = 0;
   FSM_STATE state = STARTUP;
-    unsigned int ticks_per_sec = 24414;
+  unsigned int ticks_per_sec;
 
   //unsigned int ticks_per_sec = 0x;
   
@@ -336,30 +359,29 @@ void main(void)
   PIE1bits.TMR1IE = 1; //enable TMR1 interrupts
   */
 
-  TMR0H=(0xFF00 & ticks_per_sec)>>8;
-  TMR0L=(0x00FF & ticks_per_sec);
+  TMR0H=HIGH;
+  TMR0L=LOW;
+  //TMR0H = 0x0;
+  //TMR0L = 0x0;
 
   // TMR0 SETUP
   T0CONbits.TMR0ON = 0; //stop timer
   T0CONbits.T08BIT = 0;  //16bit
   T0CONbits.T0CS = 0;   //Clock source = instruction cycle CLK
   T0CONbits.T0SE = 0;   //Rising edge
-  T0CONbits.PSA = 0;    //Assign prescaler
-  //T0CONbits.T0PS = 0x7; //Prescaler = 256 => 39062.5 ticks = 1
-  T0CON |= 0x7;
-  //T0CON |= 0x40;
+  T0CONbits.PSA = 1;    //No prescaler
   
 
   //  INTERRUPT CONFIG
   INTCONbits.GIE = 1;   //enable global interrupts
-  INTCONbits.TMR0IE=1;  //enable timer0 interrupts
+  INTCONbits.TMR0IE=0;  //enable timer0 interrupts
 
   INTCON2bits.TMR0IP=1; //TMR0 has high prio
+  T0CONbits.TMR0ON = 1;  //Enable TMR0
 
   /*INTCON=0xA0;    
   INTCON2=0x4;
   */
-  T0CONbits.TMR0ON = 1;  //Enable TMR0
 
   LCDInit();
   DelayMs(10);
@@ -367,16 +389,21 @@ void main(void)
 
 
   //display_time();
+  /*
   while(1)
   {
+    
     LED_PUT(0x02);
     DelayMs(100);
     LED_PUT(0x0);
     DelayMs(100);
+    
+    display_time();
   }
+  */
   
   // STATE MACHINE
-  /*
+  
   while(1)
   {
     display_state(state);
@@ -402,6 +429,7 @@ void main(void)
         {
           hms = 0;
           state = INC_SECS_2;
+          INTCONbits.TMR0IE=1;  //enable timer0 interrupts
         }
         break;
 
@@ -433,8 +461,7 @@ void main(void)
       break;
 
     case(INC_SECS_2):
-      DelayMs(100);
-      current_seconds++;
+      //current_seconds++;
       if(current_seconds==60)
         state = INC_MINS_2;
       else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
@@ -463,5 +490,4 @@ void main(void)
       state = STARTUP;
     } //end switch
   }   //end while
-  */
 }
