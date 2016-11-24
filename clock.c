@@ -13,8 +13,9 @@
 #define HIGH(a)    ((a>>8) & 0xFF)
 
 #define DIVISOR 5*25*25*16
-#define HIGH ((65535 - DIVISOR) & 0xFF00) >> 8
-#define LOW (65535 - DIVISOR) & 0xFF
+#define UINT16_MAX 1<<15
+#define HIGH ((UINT16_MAX - DIVISOR) & 0xFF00) >> 8
+#define LOW (UINT16_MAX - DIVISOR) & 0xFF
 
 const char *state2str[] = 
 {
@@ -64,7 +65,7 @@ enum Mode
 {
   CURRENT,
   ALARM,
-  SET
+  SET,
 } ;
 
 struct Time
@@ -75,26 +76,17 @@ struct Time
 };
 
 struct Time current_time, alarm_time;
-/*
-current_time.hours = 0;
-current_time.minutes = 0;
-current_time.seconds = 0;
-alarm_time.hours = 0;
-alarm_time.minutes = 0;
-alarm_time.seconds = 0;
-*/
 
 void DisplayString(BYTE pos, char* text);
 void DisplayWORD(BYTE pos, WORD w);
 void DisplayIPValue(DWORD IPdw);
 size_t strlcpy(char *dst, const char *src, size_t siz);
 char* current_time_string(enum Mode mode);
-//void blink_time(void);
-//void debug_display_time(void);
 void display_state(FSM_STATE state);
-//void flush_state(void);
 void change_time(unsigned char hms, struct Time* time);
 void display_time(enum Mode mode);
+void setup(void);
+void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, unsigned char seconds);
 
 
 /*************************************************
@@ -227,98 +219,48 @@ strlcpy(char *dst, const char *src, size_t siz)
   return (s - src - 1);       /* count does not include NUL */
 }
 
-/*
-unsigned char current_hours = 0;
-unsigned char current_minutes = 0;
-unsigned char current_seconds = 0;
-*/
-
-unsigned char ticks = 0;
-
 
 void high_isr (void) interrupt 1
 {
-  if(INTCONbits.TMR0IF)  //If TMR0 interrupt
+  static unsigned char ticks = 0;
+
+  if(INTCONbits.TMR0IF)  //If TMR0 flag is set
   {
-    INTCONbits.TMR0IE = 0;
+    INTCONbits.TMR0IE = 0;  // Disable TMR0 interrupts
     if (++ticks == 125)
     {
       current_time.seconds++;
       ticks = 0;
+      if((current_time.hours == alarm_time.hours) && (current_time.minutes == alarm_time.minutes) && (current_time.seconds == alarm_time.seconds))
+      {
+        //Trigger alarm!
+      }
     }
     
-    INTCONbits.TMR0IF = 0;
-    INTCONbits.TMR0IE = 1; 
-    TMR0H=HIGH;
+    INTCONbits.TMR0IF = 0;  // Reset TMR0 flag
+    INTCONbits.TMR0IE = 1;  // Re-enable TMR0 interrupts
+    TMR0H=HIGH;             // Set TMR0 values
     TMR0L=LOW; 
   }
-
-  /*
-  if(PIR1bits.TMR1IF == 1) //If TMR1 interrupt
-  {
-    current_seconds++;
-    display_time();
-    PIR1bits.TMR1IF = 0; //Clear flag
-  }
-  */
 }
 
 
 char* current_time_string(enum Mode mode)
 {
   char string[16];
-  unsigned char i = 0;
+  struct Time* time = (mode == ALARM? &alarm_time : &current_time);
 
-  struct Time* time;
-  time = &alarm_time;
-  if(mode == SET || mode == CURRENT)
-    time = &current_time;
-    
-
-  for (;i<8;i++)
-      string[i] = '0';
-
-
-  if (time->hours > 9)
-  {
-      string[1] += time->hours % 10;
-      string[0] += time->hours/10;
-  }
-  else
-    string[1] += time->hours;
-
+  string[0] = (time->hours/10) + '0';
+  string[1] = (time->hours % 10) + '0';
   string[2] = ':';
-
-  if (time->minutes > 9)
-  {
-      string[4] += time->minutes % 10;
-      string[3] += time->minutes/10;
-  }
-  else
-    string[4] += time->minutes;
-
+  string[3] = (time->minutes/10) + '0';
+  string[4] = (time->minutes % 10) + '0';
   string[5] = '.';
-
-  if (time->seconds > 9)
-  {
-      string[7] += time->seconds % 10;
-      string[6] += time->seconds/10;
-  }
-  else
-    string[7] += time->seconds;
+  string[6] = (time->seconds/10) + '0';
+  string[7] = (time->seconds % 10) + '0';
 
   return string;
 }
-
-/*
-void debug_display_time(void)
-{
-  LED_PUT(0x00);
-  //DelayMs(40);
-  display_time(set_time);
-  LED_PUT(0x01);
-}
-*/
 
 /* Displays current time on LCD display */
 void display_time(enum Mode mode)
@@ -332,60 +274,34 @@ void display_state(FSM_STATE state)
   DisplayString(0,state2str[state]);
 }
 
-/*
-void flush_state(void)
-{
-  DisplayString(0,"                ");
-}
-*/
-
-/* Blinks current time on display */
-/*
-void blink_time(void)
-{
-  DisplayString(16,"");
-  DelayMs(100);
-  display_time(set_time);
-}
-*/
-
 void change_time(unsigned char hms, struct Time* time)
 {
+  DelayMs(30);  //arbitrary delay
   if(hms==1)
   {
-    if(BUTTON0_IO == 0u)
-    {
+    if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->hours = (time->hours > 0? time->hours-1:23);
-    }
-    else if(BUTTON1_IO == 0u)
+    else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
       time->hours = (time->hours < 23? time->hours+1:0);
   }
   else if(hms==2)
   {
-    if(BUTTON0_IO == 0u)
+    if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->minutes = (time->minutes > 0? time->minutes-1:59);
-    else if(BUTTON1_IO == 0u)
+    else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
       time->minutes = (time->minutes < 59? time->minutes+1:0);
   }
   else if(hms==3)
   {
-    if(BUTTON0_IO == 0u)
+    if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->seconds = (time->seconds > 0? time->seconds-1:59);
-    else if(BUTTON1_IO == 0u)
+    else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
       time->seconds = (time->seconds < 59? time->seconds+1:0);
   }
 }
 
-
-void main(void)
+void setup(void)
 {
-  unsigned char hms = 0;
-  FSM_STATE state = STARTUP;
-  //char set_time = 1;
-  struct Time *ptr;
-  enum Mode mode = SET;
-  
-
   LED0_TRIS = 0; //configure 1st led pin as output (yellow)
   LED1_TRIS = 0; //configure 2nd led pin as output (red)
   LED2_TRIS = 0; //configure 3rd led pin as output (red)
@@ -393,95 +309,53 @@ void main(void)
   BUTTON0_TRIS = 1; //configure button0 as input
   BUTTON1_TRIS = 1; //configure button1 as input
 
-  /*
-  // INTERRUPT SETUP
-  INTCONbits.GIE = 1;  //enable global interrupts
-  INTCONbits.PEIE = 1; //enable peripheral interrupts (such as TMR1)
-  //PIE1bits.TMR1IE = 1; //enable TMR1 interrupts
-  PIR1bits.TMR1IF = 0; //reset TMR1 flag
-  IPR1bits.TMR1IP = 1; //TMR1 interrupts have high prio
-  RCONbits.IPEN = 1;   //Enable priority levels
-
-  //  TIMER1 SETUP
-
-  TMR1H = 0x80;
-  TMR1L = 0x0;
-  //TMR1H = (0xFF00 & ticks_per_sec) >> 8;
-  //TMR1L = 0x00FF & ticks_per_sec;
-
-  T1CONbits.RD16 = 0; //2x8bit operation
-  T1CONbits.T1RUN = 0; //???
-  //T1CONbits.TCKPS = 0b11; //Prescale 1:8
-  //T1CON |= 0x30;    //Prescale 1:8
-  T1CONbits.T1OSCEN = 1; //Enable clock
-  T1CONbits.T1SYNC = 1;  //??? dont care
-  T1CONbits.TMR1CS = 1; //Use external clock sourse
-  T1CONbits.TMR1ON = 1;   //Enable TMR1
-
-  PIE1bits.TMR1IE = 1; //enable TMR1 interrupts
-  */
-
+  // TMR0 SETUP
   TMR0H=HIGH;
   TMR0L=LOW;
-  //TMR0H = 0x0;
-  //TMR0L = 0x0;
-
-  // TMR0 SETUP
   T0CONbits.TMR0ON = 0; //stop timer
   T0CONbits.T08BIT = 0;  //16bit
   T0CONbits.T0CS = 0;   //Clock source = instruction cycle CLK
   T0CONbits.T0SE = 0;   //Rising edge
   T0CONbits.PSA = 1;    //No prescaler
-  
 
   //  INTERRUPT CONFIG
   INTCONbits.GIE = 1;   //enable global interrupts
   INTCONbits.TMR0IE=0;  //enable timer0 interrupts
-
   INTCON2bits.TMR0IP=1; //TMR0 has high prio
-  T0CONbits.TMR0ON = 1;  //Enable TMR0
-
-  /*INTCON=0xA0;    
-  INTCON2=0x4;
-  */
 
   LCDInit();
   DelayMs(10);
   LED_PUT(0x00);
 
+  T0CONbits.TMR0ON = 1;  //Enable TMR0
 
-  //display_time();
-  /*
-  while(1)
-  {
-    
-    LED_PUT(0x02);
-    DelayMs(100);
-    LED_PUT(0x0);
-    DelayMs(100);
-    
-    display_time();
-  }
-  */
+}
+
+void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, unsigned char seconds)
+{
+  time->hours = hours;
+  time->minutes = minutes;
+  time->seconds = seconds;
+}
+
+
+void main(void)
+{
+  unsigned char hms = 0;
+  FSM_STATE state = STARTUP;
+  enum Mode mode = SET;
+  setup();
   
-  // STATE MACHINE
-  
-  while(1)
+  while(1) // STATE MACHINE
   {
     display_state(state);
-    //display_time(set_time);
     display_time(mode);
 
     switch(state)
     {
       case(STARTUP):
-        current_time.hours = 0;
-        current_time.minutes = 0;
-        current_time.seconds = 0;
-
-        alarm_time.hours = 0;
-        alarm_time.minutes = 0;
-        alarm_time.seconds = 0;
+        init_Time(&current_time,0,0,0);
+        init_Time(&alarm_time,0,0,0);
 
         hms = 0;
         if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
@@ -503,61 +377,49 @@ void main(void)
         break;
 
     case(SET_TIME):
-      if (mode == SET) INTCONbits.TMR0IE=0;  //disable timer0 interrupts
-      else INTCONbits.TMR0IE=1;
+      INTCONbits.TMR0IE = (mode == SET? 0: 1);  //disable timer0 interrupts when setting time
+
+      change_time(hms,(mode == SET? &current_time:&alarm_time));
 
       if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
-      {
         state = WAIT_FOR_RELEASE;
-      }
 
-      if(mode == SET) ptr = &current_time;
-      else if(mode == ALARM) ptr = &alarm_time;
-      change_time(hms, ptr);
-
-      while(BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
       break;
 
     case(INC_SECS_2):
       if(current_time.seconds == 60)
         state = INC_MINS_2;
       else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
+      {
+        while (BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
         state = CHOICE;
+      }
       break;
 
     case(CHOICE):
-      //while(BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
-
       if (BUTTON0_IO == 0u && BUTTON1_IO == 1u)
-      {
-        while (BUTTON0_IO == 0u); //wait for release
         mode = SET;
-        state = SET_TIME;
-      }
-      else if(BUTTON1_IO == 0u && BUTTON0_IO == 1u)
-      {
-        while (BUTTON1_IO == 0u); //wait for release
+      else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
         mode = ALARM;
-        state = SET_TIME;
-      }
+
+      while (BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
+
+      if(mode == SET || mode == ALARM) state = WAIT_FOR_RELEASE;
+
       break;
 
     case(INC_MINS_2):
-      current_time.minutes++;
       current_time.seconds=0;
-      state = (current_time.minutes == 60? INC_HOURS_2:INC_SECS_2);
+      state = (++current_time.minutes == 60? INC_HOURS_2:INC_SECS_2);
       break;
 
     case(INC_HOURS_2):
-      current_time.hours++;
       current_time.minutes=0;
-      state = (current_time.hours == 24? RESET:INC_SECS_2);
+      state = (++current_time.hours == 24? RESET:INC_SECS_2);
       break;
 
     case(RESET):
-      current_time.hours = 0;
-      current_time.minutes = 0;
-      current_time.seconds = 0;
+      init_Time(&current_time,0,0,0);
       state = INC_SECS_2;
       break;
 
