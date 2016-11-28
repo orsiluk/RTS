@@ -12,7 +12,7 @@
 #define LOW(a)     (a & 0xFF)
 #define HIGH(a)    ((a>>8) & 0xFF)
 
-#define DIVISOR 5*25*25*16
+#define DIVISOR 5*25*25*8
 //#define UINT16_MAX 1<<15
 #define UINT16_MAX 0xFFFF
 #define HIGH ((UINT16_MAX - DIVISOR) & 0xFF00) >> 8
@@ -38,7 +38,6 @@ const char *state2str[] =
   "INC_SECS_WAIT",
   "DEBOUNCE",
   "CHOICE",
-  "WAKE_UP"
 };
 
 typedef enum
@@ -61,7 +60,6 @@ typedef enum
     INC_SECS_WAIT,
     DEBOUNCE,
     CHOICE,
-    WAKE_UP
 } FSM_STATE;
 
 enum Mode
@@ -83,12 +81,12 @@ unsigned char alarm_triggered = 0;
 
 
 void DisplayString(BYTE pos, char* text);
-void DisplayWORD(BYTE pos, WORD w);
+//void DisplayWORD(BYTE pos, WORD w);
 void DisplayIPValue(DWORD IPdw);
 size_t strlcpy(char *dst, const char *src, size_t siz);
 char* current_time_string(enum Mode mode);
 void display_state(FSM_STATE state);
-void change_time(unsigned char hms, struct Time* time);
+void change_time(unsigned char hms, enum Mode mode);
 void display_time(enum Mode mode);
 void setup(void);
 void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, unsigned char seconds);
@@ -104,6 +102,7 @@ void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, un
  __SDCC__ only: for debugging
 *************************************************/
 #if defined(__SDCC__)
+ /*
 void DisplayWORD(BYTE pos, WORD w) //WORD is a 16 bits unsigned
 {
   BYTE WDigit[6]; //enough for a  number < 65636: 5 digits + \0
@@ -121,6 +120,7 @@ void DisplayWORD(BYTE pos, WORD w) //WORD is a 16 bits unsigned
     LCDText[LCDPos] = 0;
   LCDUpdate();
 }
+*/
 
 // /*************************************************
 //  Function DisplayString:
@@ -153,6 +153,25 @@ void DisplayString(BYTE pos, char* text)
   /* Copy as many bytes as will fit */
   if (n != 0)
     while (n-- != 0)*d++ = *s++;
+  LCDUpdate();
+
+}
+
+/* Same as DisplayString, but only displays on top row of LCD */
+void DisplayTop(char* text)
+{
+  BYTE        l = strlen(text);/*number of actual chars in the string*/
+  char       *d = (char*)&LCDText[0];
+  const char *s = text;
+  size_t      n = (l < 16) ? l : 16;
+  /* Copy as many bytes as will fit */
+  unsigned char i = 16-n;
+  if (n != 0)
+  {
+    while (n-- != 0)*d++ = *s++;
+    while (i-- != 0)*d++ = ' ';
+  }
+
   LCDUpdate();
 
 }
@@ -228,6 +247,7 @@ void high_isr (void) interrupt 1
 {
   static unsigned char ticks = 0;
   static unsigned char led_data = 0;
+  static unsigned char led_on_time = 0;
 
   if(INTCONbits.TMR0IF)  //If TMR0 flag is set
   {
@@ -235,9 +255,21 @@ void high_isr (void) interrupt 1
 
     if ((++ticks % 125 == 0) && alarm_triggered)
     {
-      led_data ^= 2;
-      LED_PUT(led_data);
+      if(led_on_time++ < 60)
+      {
+        led_data ^= 2;
+        LED_PUT(led_data);
+      }
+      else
+      {
+        led_data=0;
+        led_on_time = 0;
+        LED_PUT(led_data);
+        alarm_triggered = 0;
+      }
     }
+    
+
     if (ticks == 250)
     {
       current_time.seconds++;
@@ -282,15 +314,21 @@ void display_time(enum Mode mode)
 
 void display_state(FSM_STATE state)
 {
-  DisplayString(0,"                ");
-  DisplayString(0,state2str[state]);
+  DisplayTop(state2str[state]);
+  //DisplayString(0,"                ");
+  //DisplayString(0,state2str[state]);
 }
 
-void change_time(unsigned char hms, struct Time* time)
+void change_time(unsigned char hms, enum Mode mode)
 {
+  struct Time *time = (mode == ALARM? &alarm_time: &current_time);
+
   DelayMs(20);  //arbitrary delay
   if(hms==1)
   {
+    if(mode != ALARM) DisplayTop("Set current hrs");
+    else  DisplayTop("Set alarm hours");
+
     if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->hours = (time->hours > 0? time->hours-1:23);
     else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
@@ -298,6 +336,9 @@ void change_time(unsigned char hms, struct Time* time)
   }
   else if(hms==2)
   {
+    if(mode != ALARM) DisplayTop("Set current mins");
+    else  DisplayTop("Set alarm mins");
+
     if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->minutes = (time->minutes > 0? time->minutes-1:59);
     else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
@@ -305,6 +346,9 @@ void change_time(unsigned char hms, struct Time* time)
   }
   else if(hms==3)
   {
+    if(mode != ALARM) DisplayTop("Set current secs");
+    else  DisplayTop("Set alarm secs");
+
     if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
       time->seconds = (time->seconds > 0? time->seconds-1:59);
     else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
@@ -354,16 +398,19 @@ void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, un
 void main(void)
 {
   unsigned char hms = 0;
-  FSM_STATE state = STARTUP;
+  FSM_STATE state = STARTUP, previous_state = STARTUP;
   enum Mode mode = SET;
   setup();
   
   while(1) // STATE MACHINE
   {
-    display_state(state);
+    //display_state(state); //Display current FSM state (debug)
     display_time(mode);
     if(alarm_triggered)
-      state = WAKE_UP;
+    {
+      DisplayTop("WAKE UP!");
+      state = INC_SECS_2;
+    }
 
     switch(state)
     {
@@ -372,7 +419,7 @@ void main(void)
         init_Time(&alarm_time,0,0,0);
 
         hms = 0;
-        //if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+        previous_state = STARTUP;
         state = WAIT_FOR_RELEASE;
         break;
 
@@ -385,16 +432,25 @@ void main(void)
         if(hms > 3)
         {
           hms = 0;
-          state = INC_SECS_2;
-          mode = CURRENT;
-          INTCONbits.TMR0IE=1;  //enable timer0 interrupts
+          if(previous_state == STARTUP)
+          {
+            mode = ALARM;
+            hms++;
+          }
+          else
+          {
+            state = INC_SECS_2;
+            mode = CURRENT;
+            INTCONbits.TMR0IE=1;  //enable timer0 interrupts
+          }
+          previous_state = WAIT_FOR_RELEASE;    
         }
         break;
 
     case(SET_TIME):
       INTCONbits.TMR0IE = (mode == SET? 0: 1);  //disable timer0 interrupts when setting time
 
-      change_time(hms,(mode == SET? &current_time:&alarm_time));
+      change_time(hms,mode);
 
       if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
         state = WAIT_FOR_RELEASE;
@@ -402,41 +458,53 @@ void main(void)
       break;
 
     case(INC_SECS_2):
-      if(current_time.seconds == 60)
-        state = INC_MINS_2;
-      else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
-        state = CHOICE;
+
+      if(current_time.seconds >= 60)
+      {
+        current_time.seconds=0;
+        if(++current_time.minutes >= 60)
+        {
+          current_time.minutes=0;
+          if(++current_time.hours >= 24)
+            init_Time(&current_time,0,0,0);
+        }
+      }
+
+      if(!alarm_triggered)
+      {
+        if (previous_state == CHOICE || (BUTTON0_IO == 0u && BUTTON1_IO == 0u))
+        {
+          previous_state = state;
+          state = CHOICE;
+        }
+        else
+          DisplayTop("Have a nice day!");
+        
+      }
+
       break;
 
     case(CHOICE):
+      previous_state = CHOICE;
+      DisplayTop("^Alarm  vCurrent");
+
       if (BUTTON0_IO == 0u && BUTTON1_IO == 1u)
         mode = SET;
       else if(BUTTON0_IO == 1u && BUTTON1_IO == 0u)
         mode = ALARM;
 
-      while (BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
+      while ((BUTTON0_IO == 0u || BUTTON1_IO == 0u) && current_time.seconds != 60); //wait for release
 
-      if(mode == SET || mode == ALARM) state = WAIT_FOR_RELEASE;
+      if(current_time.seconds == 60)
+        state = INC_SECS_2;
+      else if(mode == SET || mode == ALARM)
+        state = WAIT_FOR_RELEASE;
 
-      break;
-
-    case(INC_MINS_2):
-      current_time.seconds=0;
-      state = (++current_time.minutes == 60? INC_HOURS_2:INC_SECS_2);
-      break;
-
-    case(INC_HOURS_2):
-      current_time.minutes=0;
-      state = (++current_time.hours == 24? RESET:INC_SECS_2);
-      break;
-
-    case(RESET):
-      init_Time(&current_time,0,0,0);
-      state = INC_SECS_2;
       break;
 
     default:
       state = STARTUP;
+
     } //end switch
   }   //end while
 }
