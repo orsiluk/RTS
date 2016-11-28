@@ -13,7 +13,8 @@
 #define HIGH(a)    ((a>>8) & 0xFF)
 
 #define DIVISOR 5*25*25*16
-#define UINT16_MAX 1<<15
+//#define UINT16_MAX 1<<15
+#define UINT16_MAX 0xFFFF
 #define HIGH ((UINT16_MAX - DIVISOR) & 0xFF00) >> 8
 #define LOW (UINT16_MAX - DIVISOR) & 0xFF
 
@@ -36,7 +37,8 @@ const char *state2str[] =
   "INC_MINS_WAIT",
   "INC_SECS_WAIT",
   "DEBOUNCE",
-  "CHOICE"
+  "CHOICE",
+  "WAKE_UP"
 };
 
 typedef enum
@@ -58,7 +60,8 @@ typedef enum
     INC_MINS_WAIT,
     INC_SECS_WAIT,
     DEBOUNCE,
-    CHOICE
+    CHOICE,
+    WAKE_UP
 } FSM_STATE;
 
 enum Mode
@@ -76,6 +79,8 @@ struct Time
 };
 
 struct Time current_time, alarm_time;
+unsigned char alarm_triggered = 0;
+
 
 void DisplayString(BYTE pos, char* text);
 void DisplayWORD(BYTE pos, WORD w);
@@ -219,21 +224,28 @@ strlcpy(char *dst, const char *src, size_t siz)
   return (s - src - 1);       /* count does not include NUL */
 }
 
-
 void high_isr (void) interrupt 1
 {
   static unsigned char ticks = 0;
+  static unsigned char led_data = 0;
 
   if(INTCONbits.TMR0IF)  //If TMR0 flag is set
   {
     INTCONbits.TMR0IE = 0;  // Disable TMR0 interrupts
-    if (++ticks == 125)
+
+    if ((++ticks % 125 == 0) && alarm_triggered)
+    {
+      led_data ^= 2;
+      LED_PUT(led_data);
+    }
+    if (ticks == 250)
     {
       current_time.seconds++;
       ticks = 0;
-      if((current_time.hours == alarm_time.hours) && (current_time.minutes == alarm_time.minutes) && (current_time.seconds == alarm_time.seconds))
+      if (!alarm_triggered)
       {
-        //Trigger alarm!
+        if((current_time.hours == alarm_time.hours) && (current_time.minutes == alarm_time.minutes) && (current_time.seconds == alarm_time.seconds))
+          alarm_triggered = 1;
       }
     }
     
@@ -276,7 +288,7 @@ void display_state(FSM_STATE state)
 
 void change_time(unsigned char hms, struct Time* time)
 {
-  DelayMs(30);  //arbitrary delay
+  DelayMs(20);  //arbitrary delay
   if(hms==1)
   {
     if(BUTTON0_IO == 0u && BUTTON1_IO == 1u)
@@ -350,6 +362,8 @@ void main(void)
   {
     display_state(state);
     display_time(mode);
+    if(alarm_triggered)
+      state = WAKE_UP;
 
     switch(state)
     {
@@ -358,7 +372,8 @@ void main(void)
         init_Time(&alarm_time,0,0,0);
 
         hms = 0;
-        if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+        //if (BUTTON0_IO == 0u && BUTTON1_IO == 0u) state = WAIT_FOR_RELEASE;
+        state = WAIT_FOR_RELEASE;
         break;
 
       case(WAIT_FOR_RELEASE):
@@ -390,10 +405,7 @@ void main(void)
       if(current_time.seconds == 60)
         state = INC_MINS_2;
       else if (BUTTON0_IO == 0u && BUTTON1_IO == 0u)
-      {
-        while (BUTTON0_IO == 0u || BUTTON1_IO == 0u); //wait for release
         state = CHOICE;
-      }
       break;
 
     case(CHOICE):
