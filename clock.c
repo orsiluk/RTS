@@ -9,34 +9,16 @@
 #include "Include/LCDBlocking.h"
 #include "Include/TCPIP_Stack/Delay.h"
 
-#define LOW(a)     (a & 0xFF)
-#define HIGH(a)    ((a>>8) & 0xFF)
-
-#define DIVISOR 5*25*25*8
-//#define UINT16_MAX 1<<15
-#define UINT16_MAX 0xFFFF
-#define HIGH ((UINT16_MAX - DIVISOR) & 0xFF00) >> 8
-#define LOW (UINT16_MAX - DIVISOR) & 0xFF
+#define DIVISOR 25000
+#define HIGH ((0xFFFF - DIVISOR) & 0xFF00) >> 8
+#define LOW (0xFFFF - DIVISOR) & 0xFF
 
 const char *state2str[] = 
 {
   "STARTUP",
   "WAIT_FOR_RELEASE",
-  "WAIT_HOURS",
-  "WAIT_MINS",
-  "WAIT_SECS",
   "SET_TIME",
-  "INC_HOURS",
-  "INC_MINS",
-  "INC_SECS",
-  "INC_SECS_2",
-  "INC_MINS_2",
-  "INC_HOURS_2",
-  "RESET",
-  "INC_HOURS_WAIT",
-  "INC_MINS_WAIT",
-  "INC_SECS_WAIT",
-  "DEBOUNCE",
+  "INC_TIME",
   "CHOICE",
 };
 
@@ -44,21 +26,8 @@ typedef enum
 {
     STARTUP,
     WAIT_FOR_RELEASE,
-    WAIT_HOURS,
-    WAIT_MINS,
-    WAIT_SECS,
     SET_TIME,
-    INC_HOURS,
-    INC_MINS,
-    INC_SECS,
-    INC_SECS_2,
-    INC_MINS_2,
-    INC_HOURS_2,
-    RESET,
-    INC_HOURS_WAIT,
-    INC_MINS_WAIT,
-    INC_SECS_WAIT,
-    DEBOUNCE,
+    INC_TIME,
     CHOICE,
 } FSM_STATE;
 
@@ -79,11 +48,8 @@ struct Time
 struct Time current_time, alarm_time;
 unsigned char alarm_triggered = 0;
 
-
 void DisplayString(BYTE pos, char* text);
-//void DisplayWORD(BYTE pos, WORD w);
-void DisplayIPValue(DWORD IPdw);
-size_t strlcpy(char *dst, const char *src, size_t siz);
+void DisplayTop(char* text);
 char* current_time_string(enum Mode mode);
 void display_state(FSM_STATE state);
 void change_time(unsigned char hms, enum Mode mode);
@@ -91,52 +57,7 @@ void display_time(enum Mode mode);
 void setup(void);
 void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, unsigned char seconds);
 
-
-/*************************************************
- Function DisplayWORD:
- writes a WORD in hexa on the position indicated by
- pos.
- - pos=0 -> 1st line of the LCD
- - pos=16 -> 2nd line of the LCD
-
- __SDCC__ only: for debugging
-*************************************************/
 #if defined(__SDCC__)
- /*
-void DisplayWORD(BYTE pos, WORD w) //WORD is a 16 bits unsigned
-{
-  BYTE WDigit[6]; //enough for a  number < 65636: 5 digits + \0
-  BYTE j;
-  BYTE LCDPos = 0; //write on first line of LCD
-  unsigned radix = 10; //type expected by sdcc's ultoa()
-
-  LCDPos = pos;
-  ultoa(w, WDigit, radix);
-  for (j = 0; j < strlen((char*)WDigit); j++)
-  {
-    LCDText[LCDPos++] = WDigit[j];
-  }
-  if (LCDPos < 32u)
-    LCDText[LCDPos] = 0;
-  LCDUpdate();
-}
-*/
-
-// /*************************************************
-//  Function DisplayString:
-//  Writes string to the LCD display starting at pos
-//  since strlcopy writes the final \0, only 31 characters
-//  are really usable on the LCD
-//  *************************************************/
-// void DisplayString(BYTE pos, char* text)
-// {
-//   BYTE l= strlen(text)+1;/* l must include the finam \0, so, it is strlen+1*/
-//    BYTE max= 32-pos;
-//    strlcpy((char*)&LCDText[pos], text,(l<max)?l:max );
-//    LCDUpdate();
-//
-// }
-
 /*************************************************
  Function DisplayString:
  Writes the first characters of the string in the remaining
@@ -171,77 +92,11 @@ void DisplayTop(char* text)
     while (n-- != 0)*d++ = *s++;
     while (i-- != 0)*d++ = ' ';
   }
-
   LCDUpdate();
-
 }
 
 #endif
 
-
-
-/*-------------------------------------------------------------------------
- *
- * strlcpy.c
- *    strncpy done right
- *
- * This file was taken from OpenBSD and is used on platforms that don't
- * provide strlcpy().  The OpenBSD copyright terms follow.
- *-------------------------------------------------------------------------
- */
-
-/*  $OpenBSD: strlcpy.c,v 1.11 2006/05/05 15:27:38 millert Exp $    */
-
-/*
- * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
- * Copy src to string dst of size siz.  At most siz-1 characters
- * will be copied.  Always NUL terminates (unless siz == 0).
- * Returns strlen(src); if retval >= siz, truncation occurred.
- * Function creation history:  http://www.gratisoft.us/todd/papers/strlcpy.html
- */
-size_t
-strlcpy(char *dst, const char *src, size_t siz)
-{
-  char       *d = dst;
-  const char *s = src;
-  size_t      n = siz;
-
-  /* Copy as many bytes as will fit */
-  if (n != 0)
-  {
-    while (--n != 0)
-    {
-      if ((*d++ = *s++) == '\0')
-        break;
-    }
-  }
-
-  /* Not enough room in dst, add NUL and traverse rest of src */
-  if (n == 0)
-  {
-    if (siz != 0)
-      *d = '\0';          /* NUL-terminate dst */
-    while (*s++)
-      ;
-  }
-
-  return (s - src - 1);       /* count does not include NUL */
-}
 
 void high_isr (void) interrupt 1
 {
@@ -256,17 +111,14 @@ void high_isr (void) interrupt 1
     if ((++ticks % 125 == 0) && alarm_triggered)
     {
       if(led_on_time++ < 60)
-      {
         led_data ^= 2;
-        LED_PUT(led_data);
-      }
       else
       {
-        led_data=0;
+        led_data = 0;
         led_on_time = 0;
-        LED_PUT(led_data);
         alarm_triggered = 0;
       }
+      LED_PUT(led_data);
     }
     
 
@@ -291,7 +143,8 @@ void high_isr (void) interrupt 1
 
 char* current_time_string(enum Mode mode)
 {
-  char string[16];
+  char string[12];
+  unsigned char i = 8;
   struct Time* time = (mode == ALARM? &alarm_time : &current_time);
 
   string[0] = (time->hours/10) + '0';
@@ -302,23 +155,24 @@ char* current_time_string(enum Mode mode)
   string[5] = '.';
   string[6] = (time->seconds/10) + '0';
   string[7] = (time->seconds % 10) + '0';
+  for(;i<12;i++) string[i] = ' ';
 
   return string;
 }
 
-/* Displays current time on LCD display */
+/* Displays current time on lower row of LCD display */
 void display_time(enum Mode mode)
 {
-  DisplayString(16, current_time_string(mode));
+  DisplayString(20, current_time_string(mode));
 }
 
+/* Displays the current FSM state in the upper row of LCD display. Used in debug. */
 void display_state(FSM_STATE state)
 {
   DisplayTop(state2str[state]);
-  //DisplayString(0,"                ");
-  //DisplayString(0,state2str[state]);
 }
 
+/* Changes the current or alarm time, depending on the mode. */
 void change_time(unsigned char hms, enum Mode mode)
 {
   struct Time *time = (mode == ALARM? &alarm_time: &current_time);
@@ -356,6 +210,7 @@ void change_time(unsigned char hms, enum Mode mode)
   }
 }
 
+/* Setup initialization. Run at startup . */
 void setup(void)
 {
   LED0_TRIS = 0; //configure 1st led pin as output (yellow)
@@ -387,13 +242,13 @@ void setup(void)
 
 }
 
+/* Initializes instance of struct Time. */
 void init_Time(struct Time* time, unsigned char hours, unsigned char minutes, unsigned char seconds)
 {
   time->hours = hours;
   time->minutes = minutes;
   time->seconds = seconds;
 }
-
 
 void main(void)
 {
@@ -409,7 +264,7 @@ void main(void)
     if(alarm_triggered)
     {
       DisplayTop("WAKE UP!");
-      state = INC_SECS_2;
+      state = INC_TIME;
     }
 
     switch(state)
@@ -418,9 +273,9 @@ void main(void)
         init_Time(&current_time,0,0,0);
         init_Time(&alarm_time,0,0,0);
 
-        hms = 0;
+        hms = 1;
         previous_state = STARTUP;
-        state = WAIT_FOR_RELEASE;
+        state = SET_TIME;
         break;
 
       case(WAIT_FOR_RELEASE):
@@ -439,7 +294,7 @@ void main(void)
           }
           else
           {
-            state = INC_SECS_2;
+            state = INC_TIME;
             mode = CURRENT;
             INTCONbits.TMR0IE=1;  //enable timer0 interrupts
           }
@@ -457,7 +312,7 @@ void main(void)
 
       break;
 
-    case(INC_SECS_2):
+    case(INC_TIME):
 
       if(current_time.seconds >= 60)
       {
@@ -479,7 +334,6 @@ void main(void)
         }
         else
           DisplayTop("Have a nice day!");
-        
       }
 
       break;
@@ -496,7 +350,7 @@ void main(void)
       while ((BUTTON0_IO == 0u || BUTTON1_IO == 0u) && current_time.seconds != 60); //wait for release
 
       if(current_time.seconds == 60)
-        state = INC_SECS_2;
+        state = INC_TIME;
       else if(mode == SET || mode == ALARM)
         state = WAIT_FOR_RELEASE;
 
