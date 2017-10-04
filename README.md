@@ -1,8 +1,8 @@
-# RTS
+# ALarm clock on microprocessor by Microchip
 
 Project for Real Time and Embedded Systems
 
-An alarm clock was implemented on a development board based on the PIC18F97J60 microprocessorby Microchip.  
+An alarm clock was implemented on a development board based on microprocessor by Microchip.  
 The alarm clock had to have the following features:
   1.  The format of the time displayed had to be hh:mm:ss, which meant that the display had to beupdated once a second
   2.  Hours had to be counted from 0 to 23; so the display had to jump from 23:59.59 to 00:00.00
